@@ -1,0 +1,7 @@
+.venv311
+node_modules
+frontend/dist
+memory/*.sqlite3
+memory/*.jsonl
+.env
+memory/credentials.json
