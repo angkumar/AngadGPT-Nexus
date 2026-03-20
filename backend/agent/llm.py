@@ -77,7 +77,7 @@ class OpenAICompatibleProvider(LLMProvider):
             "messages": [{"role": "system", "content": system}] + messages,
             "temperature": 0.2,
         }
-        with httpx.Client(timeout=180) as client:
+        with httpx.Client(timeout=600) as client:
             response = client.post(f"{self.base_url}/v1/chat/completions", json=payload)
             response.raise_for_status()
             data = response.json()

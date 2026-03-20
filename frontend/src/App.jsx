@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import remarkBreaks from 'remark-breaks'
 
 const apiBase = import.meta.env.VITE_API_URL || '/api'
 
@@ -37,6 +40,28 @@ export default function App() {
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }, [messages, isSending])
 
+  const normalizeAssistantContent = (data) => {
+    if (!data) return ''
+    if (typeof data.content === 'string') {
+      const raw = data.content.trim()
+      if (raw.startsWith('{') && raw.includes('"action"') && raw.includes('"content"')) {
+        try {
+          const parsed = JSON.parse(raw)
+          if (parsed && parsed.action === 'respond' && typeof parsed.content === 'string') {
+            return parsed.content
+          }
+        } catch {
+          // Fall through to raw content
+        }
+      }
+      return data.content
+    }
+    if (typeof data === 'object' && data.action === 'respond' && typeof data.content === 'string') {
+      return data.content
+    }
+    return JSON.stringify(data, null, 2)
+  }
+
   const sendAgent = async () => {
     if (!agentInput.trim()) return
     const input = agentInput
@@ -57,7 +82,7 @@ export default function App() {
         return
       }
       const data = await res.json()
-      const content = data.content || JSON.stringify(data, null, 2)
+      const content = normalizeAssistantContent(data)
       setMessages((prev) => [...prev, { role: 'assistant', content }])
     } catch (err) {
       setAgentError(`Network error: ${err?.message || err}`)
@@ -119,7 +144,16 @@ export default function App() {
                   : 'bg-white/5 border border-white/10 self-start'
               }`}
             >
-              <pre className="whitespace-pre-wrap font-sans">{msg.content}</pre>
+              {msg.role === 'assistant' ? (
+                <ReactMarkdown
+                  className="markdown"
+                  remarkPlugins={[remarkGfm, remarkBreaks]}
+                >
+                  {msg.content}
+                </ReactMarkdown>
+              ) : (
+                <div className="whitespace-pre-wrap font-sans">{msg.content}</div>
+              )}
             </div>
           ))}
 
