@@ -54,7 +54,9 @@ npm install
 npm run dev
 ```
 
-The UI runs at `http://localhost:5173` and calls the API at `/api` by default.
+The UI runs at `http://localhost:5173` on the backend machine and is also
+available to devices on the same Wi-Fi at `http://<backend-machine-ip>:5173`.
+It calls the API at `/api` by default.
 
 To run both backend and frontend from the repo root:
 
