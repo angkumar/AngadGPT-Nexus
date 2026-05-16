@@ -12,9 +12,19 @@ from backend.tools.calendar import CalendarTool
 router = APIRouter()
 
 ws_manager = WebSocketManager()
-agent = Agent()
-calendar_tool = agent.tools.get("calendar", CalendarTool())
+agent: Agent | None = None
 task_runner = TaskRunner(ws_manager)
+
+
+def get_agent() -> Agent:
+    global agent
+    if agent is None:
+        agent = Agent()
+    return agent
+
+
+def get_calendar_tool() -> CalendarTool:
+    return get_agent().tools.get("calendar", CalendarTool())
 
 
 class AgentRequest(BaseModel):
@@ -28,11 +38,12 @@ async def health() -> Dict[str, Any]:
 
 @router.post("/agent/step", dependencies=[Depends(require_auth)])
 async def agent_step(payload: AgentRequest) -> Dict[str, Any]:
-    return agent.step(payload.message)
+    return get_agent().step(payload.message)
 
 
 @router.get("/memory", dependencies=[Depends(require_auth)])
 async def memory() -> Dict[str, Any]:
+    agent = get_agent()
     return {
         "summary": agent.memory.get_summary(),
         "messages": [m.__dict__ for m in agent.memory.list_messages(100)],
@@ -41,7 +52,7 @@ async def memory() -> Dict[str, Any]:
 
 @router.post("/calendar", dependencies=[Depends(require_auth)])
 async def calendar(payload: Dict[str, Any]) -> Dict[str, Any]:
-    return calendar_tool.run(**payload)
+    return get_calendar_tool().run(**payload)
 
 
 @router.get("/tasks", dependencies=[Depends(require_auth)])
@@ -52,6 +63,7 @@ async def tasks() -> Dict[str, Any]:
 
 @router.get("/tools", dependencies=[Depends(require_auth)])
 async def tools() -> Dict[str, Any]:
+    agent = get_agent()
     return {
         "tools": {
             name: {

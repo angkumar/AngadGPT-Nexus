@@ -13,9 +13,37 @@ logger = logging.getLogger("agent")
 SYSTEM_PROMPT = """
 You are AngadGPT Nexus, a multi-purpose assistant focused on code, scheduling, and workflow automation.
 Follow safe operating constraints: never execute destructive actions without explicit confirmation.
+
+Voice and behavior:
+- Sound like a senior coding assistant: calm, direct, technically precise, and useful.
+- Be concise, but not performative. Do not use hype, motivational slogans, theatrical repetition, or faux-hardcore language.
+- Do not ask stacked generic questions such as "What is the task? What is the goal? What is the output?"
+- Do not say things like "No fluff", "Only work", "Just code", "Let's go", "I'm ready", or similar catchphrases.
+- When the user asks for code work, state the relevant next action and proceed when enough context is available.
+- Ask one focused clarifying question only when missing information blocks safe progress.
+- For explanations, lead with the answer, then give the minimum useful reasoning and concrete next steps.
+
 When calling tools, respond with strict JSON: {"action":"tool","tool_name":"<name>","args":{...}}.
 For normal replies, respond with plain text (no JSON wrapper).
 """.strip()
+
+CORNY_RESPONSE_PATTERNS = [
+    r"^\s*understood\.?\s*$",
+    r"^\s*no fluff\.?\s*$",
+    r"^\s*no distractions\.?\s*$",
+    r"^\s*only work\.?\s*$",
+    r"^\s*only results\.?\s*$",
+    r"^\s*what is the task\?\s*$",
+    r"^\s*what is the goal\?\s*$",
+    r"^\s*what is the output\?\s*$",
+    r"^\s*let['’]s go\s*[—-]\s*execute\.?\s*$",
+    r"^\s*just code\.?\s*$",
+    r"^\s*just logic\.?\s*$",
+    r"^\s*just results\.?\s*$",
+    r"^\s*what do you need\?\s*$",
+    r"^\s*i['’]m ready\.?\s*$",
+    r"^\s*go\.?\s*$",
+]
 
 
 class Agent:
@@ -37,7 +65,13 @@ class Agent:
     def _summarize_if_needed(self) -> Optional[str]:
         def summarizer(prompt: str, target_messages: int) -> str:
             messages = [
-                {"role": "system", "content": "Summarize the conversation briefly."},
+                {
+                    "role": "system",
+                    "content": (
+                        "Summarize durable user preferences, project facts, and unresolved tasks briefly. "
+                        "Do not preserve assistant catchphrases, motivational slogans, or transient style."
+                    ),
+                },
                 {"role": "user", "content": prompt},
             ]
             response = self.provider.generate(system="", messages=messages)
@@ -83,7 +117,7 @@ class Agent:
             self.memory.add_message("tool", json.dumps(tool_result))
             return {"type": "tool", "tool": tool_name, "result": tool_result}
 
-        content = result.get("content", response.content)
+        content = self._clean_response_style(result.get("content", response.content))
         self.memory.add_message("assistant", content)
         return {"type": "response", "content": content}
 
@@ -92,6 +126,19 @@ class Agent:
             return json.loads(content)
         except json.JSONDecodeError:
             return {"action": "respond", "content": content}
+
+    def _clean_response_style(self, content: str) -> str:
+        """Remove known motivational boilerplate that some local models overproduce."""
+        lines = content.splitlines()
+        cleaned_lines = [
+            line for line in lines
+            if not any(re.match(pattern, line, re.IGNORECASE) for pattern in CORNY_RESPONSE_PATTERNS)
+        ]
+        cleaned = "\n".join(cleaned_lines).strip()
+
+        if cleaned:
+            return cleaned
+        return "What would you like me to work on?"
 
     def _try_route_tool(self, user_input: str) -> Optional[Dict[str, Any]]:
         text = user_input.strip()

@@ -31,10 +31,14 @@ pip install -r backend/requirements.txt
 3. Run the API:
 
 ```bash
-uvicorn backend.app:app --reload
+scripts/dev_backend.sh
 ```
 
 The API runs at `http://localhost:8000` with routes under `/api`.
+
+Use the script instead of a bare `uvicorn ...` command. It pins execution to
+the repo virtual environment, so Homebrew or system Python installs cannot take
+over accidentally.
 
 ## Frontend Setup
 1. Install dependencies:
@@ -51,6 +55,12 @@ npm run dev
 ```
 
 The UI runs at `http://localhost:5173` and calls the API at `/api` by default.
+
+To run both backend and frontend from the repo root:
+
+```bash
+scripts/dev.sh
+```
 
 ## TinyLLM
 - Set `TINYLLM_MODEL_PATH` in `.env` to your local model file.
