@@ -29,7 +29,7 @@ export default function App() {
   }, [token])
 
   useEffect(() => {
-    fetch(`${apiBase}/health`)
+    fetch(`${apiBase}/api/health`)
       .then((res) => res.json())
       .then(() => setStatus('online'))
       .catch(() => setStatus('offline'))
@@ -71,7 +71,7 @@ export default function App() {
     setMessages((prev) => [...prev, { role: 'user', content: input }])
 
     try {
-      const res = await fetch(`${apiBase}/agent/step`, {
+      const res = await fetch(`${apiBase}/api/agent/step`, {
         method: 'POST',
         headers: apiHeaders,
         body: JSON.stringify({ message: input })
