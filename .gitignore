@@ -5,3 +5,7 @@ memory/*.sqlite3
 memory/*.jsonl
 .env
 memory/credentials.json
+NexusChatiOS/DerivedData/
+NexusChatiOS/build/
+*.xcuserstate
+xcuserdata/
