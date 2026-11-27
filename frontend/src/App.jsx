@@ -4,14 +4,9 @@ import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 
 const apiBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
-
-const headersWithAuth = (token) =>
-  token
-    ? {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      }
-    : { 'Content-Type': 'application/json' }
+const headersWithAuth = (token) => token
+  ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+  : { 'Content-Type': 'application/json' }
 
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem('angadgpt_token') || '')
@@ -21,23 +16,16 @@ export default function App() {
   const [agentError, setAgentError] = useState('')
   const [isSending, setIsSending] = useState(false)
   const scrollRef = useRef(null)
-
   const apiHeaders = useMemo(() => headersWithAuth(token), [token])
+  const firstUserMessage = messages.find((message) => message.role === 'user')?.content
+  const chatTitle = firstUserMessage ? firstUserMessage.replace(/\s+/g, ' ').slice(0, 42) : 'New chat'
 
+  useEffect(() => { localStorage.setItem('angadgpt_token', token) }, [token])
   useEffect(() => {
-    localStorage.setItem('angadgpt_token', token)
-  }, [token])
-
-  useEffect(() => {
-    fetch(`${apiBase}/api/health`)
-      .then((res) => res.json())
-      .then(() => setStatus('online'))
-      .catch(() => setStatus('offline'))
+    fetch(`${apiBase}/api/health`).then((res) => res.json()).then(() => setStatus('online')).catch(() => setStatus('offline'))
   }, [])
-
   useEffect(() => {
-    if (!scrollRef.current) return
-    scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }, [messages, isSending])
 
   const normalizeAssistantContent = (data) => {
@@ -47,18 +35,12 @@ export default function App() {
       if (raw.startsWith('{') && raw.includes('"action"') && raw.includes('"content"')) {
         try {
           const parsed = JSON.parse(raw)
-          if (parsed && parsed.action === 'respond' && typeof parsed.content === 'string') {
-            return parsed.content
-          }
-        } catch {
-          // Fall through to raw content
-        }
+          if (parsed?.action === 'respond' && typeof parsed.content === 'string') return parsed.content
+        } catch { /* Use the original response when it is not JSON. */ }
       }
       return data.content
     }
-    if (typeof data === 'object' && data.action === 'respond' && typeof data.content === 'string') {
-      return data.content
-    }
+    if (typeof data === 'object' && data.action === 'respond' && typeof data.content === 'string') return data.content
     return JSON.stringify(data, null, 2)
   }
 
@@ -69,12 +51,9 @@ export default function App() {
     setAgentError('')
     setIsSending(true)
     setMessages((prev) => [...prev, { role: 'user', content: input }])
-
     try {
       const res = await fetch(`${apiBase}/api/agent/step`, {
-        method: 'POST',
-        headers: apiHeaders,
-        body: JSON.stringify({ message: input })
+        method: 'POST', headers: apiHeaders, body: JSON.stringify({ message: input })
       })
       if (!res.ok) {
         const text = await res.text()
@@ -82,8 +61,7 @@ export default function App() {
         return
       }
       const data = await res.json()
-      const content = normalizeAssistantContent(data)
-      setMessages((prev) => [...prev, { role: 'assistant', content }])
+      setMessages((prev) => [...prev, { role: 'assistant', content: normalizeAssistantContent(data) }])
     } catch (err) {
       setAgentError(`Network error: ${err?.message || err}`)
     } finally {
@@ -99,101 +77,57 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <header className="border-b border-white/10 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="h-9 w-9 rounded-full bg-cobalt/20 border border-cobalt/40 grid place-items-center">
-            <span className="text-cobalt font-bold">A</span>
-          </div>
-          <div>
-            <div className="text-sm uppercase tracking-[0.3em] text-haze/60">AngadGPT Nexus</div>
-            <div className="text-lg font-semibold">Chat</div>
-          </div>
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand-row"><div className="brand-mark">N</div><span>Nexus</span><span className="sidebar-chevron">⌄</span></div>
+        <button className="new-chat" onClick={() => window.location.reload()}><span>＋</span> New chat</button>
+        <div className="sidebar-section">Recent</div>
+        {messages.length > 0 && <div className="history-item active"><span className="history-dot" />{chatTitle}</div>}
+        <div className="sidebar-note">Your conversations will appear here.</div>
+        <div className="sidebar-bottom">
+          <label className="token-label" htmlFor="auth-token">API access</label>
+          <input id="auth-token" value={token} onChange={(e) => setToken(e.target.value)} placeholder="Auth token (optional)" />
+          <div className="connection"><i className={status} />{status === 'booting' ? 'Connecting…' : status === 'online' ? 'Connected' : 'Offline'}</div>
         </div>
-        <div className="flex items-center gap-3">
-          <div className={`text-xs ${status === 'online' ? 'text-emerald-400' : 'text-ember'}`}>
-            {status}
-          </div>
-          <input
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder="Auth token (optional)"
-            className="bg-transparent border border-white/10 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-cobalt"
-          />
-        </div>
-      </header>
+      </aside>
 
-      <main className="flex-1 overflow-y-auto px-6 py-6" ref={scrollRef}>
-        <div className="max-w-3xl mx-auto flex flex-col gap-4">
-          {messages.length === 0 && (
-            <div className="glass rounded-2xl p-6 text-haze/70">
-              <div className="text-sm uppercase tracking-[0.2em] text-haze/50">Welcome</div>
-              <h2 className="text-2xl font-semibold mt-2">Talk to Nexus</h2>
-              <p className="mt-2 text-sm text-haze/70">
-                Ask anything. Try: “list files”, “read repo/README.md”, or “run repo/scripts/train.py”.
-              </p>
+      <section className="chat-workspace">
+        <header className="topbar">
+          <div className="mobile-brand">Nexus</div>
+          <div className="chat-heading"><span>{chatTitle}</span><span className="heading-chevron">⌄</span></div>
+          <div className="model-pill"><span className="model-spark">✳</span><span>Nexus AI</span><span className="model-caret">⌄</span></div>
+        </header>
+
+        <main className="conversation" ref={scrollRef}>
+          {messages.length === 0 ? (
+            <div className="welcome">
+              <div className="welcome-symbol">✳</div>
+              <h1>What can I help you with?</h1>
+              <p>Ask a question, explore an idea, or work on a project.</p>
+            </div>
+          ) : (
+            <div className="message-list">
+              {messages.map((msg, idx) => (
+                <article key={idx} className={`message ${msg.role}`}>
+                  {msg.role === 'assistant' ? <><div className="assistant-avatar">✳</div><ReactMarkdown className="markdown" remarkPlugins={[remarkGfm, remarkBreaks]}>{msg.content}</ReactMarkdown></> : <div className="user-bubble">{msg.content}</div>}
+                </article>
+              ))}
+              {isSending && <article className="message assistant"><div className="assistant-avatar">✳</div><div className="thinking"><span /><span /><span /></div></article>}
             </div>
           )}
+        </main>
 
-          {messages.map((msg, idx) => (
-            <div
-              key={idx}
-              className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                msg.role === 'user'
-                  ? 'bg-cobalt/20 border border-cobalt/40 self-end'
-                  : 'bg-white/5 border border-white/10 self-start'
-              }`}
-            >
-              {msg.role === 'assistant' ? (
-                <ReactMarkdown
-                  className="markdown"
-                  remarkPlugins={[remarkGfm, remarkBreaks]}
-                >
-                  {msg.content}
-                </ReactMarkdown>
-              ) : (
-                <div className="whitespace-pre-wrap font-sans">{msg.content}</div>
-              )}
+        <footer className="composer-area">
+          <div className="composer-wrap">
+            {agentError && <div className="error-message">{agentError}</div>}
+            <div className="composer">
+              <textarea value={agentInput} onChange={(e) => setAgentInput(e.target.value)} onKeyDown={handleKeyDown} rows={1} placeholder="Message Nexus…" aria-label="Message Nexus" />
+              <div className="composer-tools"><span className="composer-hint">↵ to send · ⇧↵ for a new line</span><button className="send-button" onClick={sendAgent} disabled={isSending || !agentInput.trim()} aria-label="Send message">↑</button></div>
             </div>
-          ))}
-
-          {isSending && (
-            <div className="max-w-[60%] rounded-2xl px-4 py-3 text-sm bg-white/5 border border-white/10 self-start">
-              Nexus is thinking...
-            </div>
-          )}
-        </div>
-      </main>
-
-      <footer className="border-t border-white/10 px-6 py-4">
-        <div className="max-w-3xl mx-auto flex flex-col gap-2">
-          {agentError && (
-            <div className="text-xs text-ember border border-ember/40 rounded-lg p-2">
-              {agentError}
-            </div>
-          )}
-          <div className="flex gap-3">
-            <textarea
-              value={agentInput}
-              onChange={(e) => setAgentInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              rows={2}
-              placeholder="Send a message..."
-              className="flex-1 bg-transparent border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-cobalt"
-            />
-            <button
-              onClick={sendAgent}
-              className="bg-ember text-obsidian font-semibold px-5 rounded-xl hover:opacity-90"
-              disabled={isSending}
-            >
-              Send
-            </button>
+            <div className="composer-disclaimer">Nexus can make mistakes. Check important information.</div>
           </div>
-          <div className="text-xs text-haze/50">
-            Press Enter to send, Shift+Enter for a new line.
-          </div>
-        </div>
-      </footer>
+        </footer>
+      </section>
     </div>
   )
 }
