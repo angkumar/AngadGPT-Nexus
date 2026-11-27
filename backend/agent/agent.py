@@ -109,8 +109,18 @@ class Agent:
         messages: List[Dict[str, str]] = []
         if summary:
             messages.append({"role": "system", "content": f"Summary so far: {summary}"})
+        # Historical tool results are stored as `tool` rows, but they are not
+        # OpenAI/Groq tool-call transcript entries: there is no preceding
+        # assistant tool_calls object or matching tool_call_id. Keep the result
+        # in context as assistant text so providers accept the conversation.
         messages.extend(
-            [{"role": m.role, "content": m.content} for m in self.memory.list_messages(50)]
+            [
+                {
+                    "role": "assistant" if m.role == "tool" else m.role,
+                    "content": f"Previous tool result:\n{m.content}" if m.role == "tool" else m.content,
+                }
+                for m in self.memory.list_messages(50)
+            ]
         )
 
         try:
