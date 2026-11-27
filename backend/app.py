@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.api.routes import router, start_scheduler
+from backend.core.config import ALLOWED_ORIGINS
 from backend.core.logging import setup_logging
 
 
@@ -11,8 +12,8 @@ def create_app() -> FastAPI:
     app = FastAPI(title="AngadGPT Nexus")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=ALLOWED_ORIGINS,
+        allow_credentials=False,
         allow_methods=["*"] ,
         allow_headers=["*"],
     )

@@ -67,9 +67,15 @@ class MockLLMProvider(LLMProvider):
 class OpenAICompatibleProvider(LLMProvider):
     name = "openai_compatible"
 
-    def __init__(self, base_url: str = LMSTUDIO_BASE_URL, model: str = LMSTUDIO_MODEL) -> None:
+    def __init__(
+        self,
+        base_url: str = LMSTUDIO_BASE_URL,
+        model: str = LMSTUDIO_MODEL,
+        api_key: str = "",
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model or "local-model"
+        self.api_key = api_key
 
     def generate(self, system: str, messages: List[Dict[str, str]]) -> LLMResponse:
         payload = {
@@ -77,8 +83,13 @@ class OpenAICompatibleProvider(LLMProvider):
             "messages": [{"role": "system", "content": system}] + messages,
             "temperature": 0.2,
         }
-        with httpx.Client(timeout=600) as client:
-            response = client.post(f"{self.base_url}/v1/chat/completions", json=payload)
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        with httpx.Client(timeout=120) as client:
+            response = client.post(
+                f"{self.base_url}/v1/chat/completions",
+                json=payload,
+                headers=headers,
+            )
             response.raise_for_status()
             data = response.json()
         content = data["choices"][0]["message"]["content"]

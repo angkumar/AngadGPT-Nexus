@@ -40,6 +40,43 @@ Use the script instead of a bare `uvicorn ...` command. It pins execution to
 the repo virtual environment, so Homebrew or system Python installs cannot take
 over accidentally.
 
+## Deploy the Backend to Railway
+
+The repository includes `railway.toml` for deploying the FastAPI backend from
+the repository root. The Vite frontend remains on Vercel.
+
+1. Push this repository to GitHub and create a Railway project from that repo.
+2. Keep the backend service root directory set to `/` (the repository root).
+   Railway reads `railway.toml`, installs `requirements.txt`, starts
+   Uvicorn on Railway's `$PORT`, and checks `/api/health`.
+3. Add these service variables in Railway. Do not commit real secret values:
+
+   - `ANGADGPT_LLM_PROVIDER=groq`
+   - `GROQ_API_KEY` = your Groq API key
+   - `GROQ_MODEL=openai/gpt-oss-20b`
+   - `ANGADGPT_AUTH_TOKEN` = a long random token
+   - `ANGADGPT_ALLOWED_ORIGINS` = your exact Vercel origin, such as
+     `https://your-app.vercel.app` (no path or trailing slash)
+
+4. Attach a Railway volume to the service at `/app/memory` to preserve SQLite
+   chat memory and calendar data. Railway Free currently includes one 0.5 GB
+   volume; its services sleep when idle and share a $1 monthly usage allowance.
+   The API may take a little time to wake after inactivity, and scheduled jobs
+   are not reliable while a free service is asleep.
+5. Generate a token locally with `openssl rand -hex 32`. Enter the same token in
+   the frontend's Auth token field. Do not put it in a `VITE_` variable or commit
+   it; Vite variables are included in browser code.
+6. In Vercel, set `VITE_API_URL` to the Railway public origin
+   (`https://your-service.up.railway.app`, without `/api`), then redeploy.
+7. Verify `https://your-service.up.railway.app/api/health` returns
+   `{"status":"ok"}`. The frontend now calls `/api/...` correctly for both
+   local Vite proxy use and the Railway API.
+
+The current API is a single-user prototype: one shared auth token does not
+provide separate accounts or per-user data isolation. Keep the Vercel site
+private while using this setup. The backend's file and script tools see Railway's
+container, not files on your computer.
+
 ## Frontend Setup
 1. Install dependencies:
 

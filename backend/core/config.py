@@ -26,6 +26,16 @@ GOOGLE_TOKEN_PATH = os.getenv(
 TINYLLM_MODEL_PATH = os.getenv("TINYLLM_MODEL_PATH", "")
 LMSTUDIO_BASE_URL = os.getenv("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234")
 LMSTUDIO_MODEL = os.getenv("LMSTUDIO_MODEL", "")
+LLM_PROVIDER = os.getenv("ANGADGPT_LLM_PROVIDER", "lmstudio").strip().lower()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
+GROQ_BASE_URL = "https://api.groq.com/openai"
+
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("ANGADGPT_ALLOWED_ORIGINS", "*").split(",")
+    if origin.strip()
+]
 
 AUTH_TOKEN = os.getenv("ANGADGPT_AUTH_TOKEN", "")
 

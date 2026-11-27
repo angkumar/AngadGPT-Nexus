@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 
-const apiBase = import.meta.env.VITE_API_URL || '/api'
+const apiBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
 
 const headersWithAuth = (token) =>
   token

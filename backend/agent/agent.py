@@ -4,7 +4,14 @@ import re
 from typing import Any, Dict, List, Optional
 
 from backend.agent.llm import LLMProvider, MockLLMProvider, OpenAICompatibleProvider, TinyLLMProvider
-from backend.core.config import LMSTUDIO_BASE_URL, LMSTUDIO_MODEL
+from backend.core.config import (
+    GROQ_API_KEY,
+    GROQ_BASE_URL,
+    GROQ_MODEL,
+    LLM_PROVIDER,
+    LMSTUDIO_BASE_URL,
+    LMSTUDIO_MODEL,
+)
 from backend.agent.memory import MemoryStore
 from backend.tools.registry import default_tools
 
@@ -56,13 +63,19 @@ class Agent:
         self.pending_edit = None
 
     def _load_provider(self) -> LLMProvider:
-        try:
-            if LMSTUDIO_BASE_URL:
-                return OpenAICompatibleProvider(base_url=LMSTUDIO_BASE_URL, model=LMSTUDIO_MODEL)
+        if LLM_PROVIDER == "groq":
+            if not GROQ_API_KEY:
+                raise RuntimeError("GROQ_API_KEY is required when ANGADGPT_LLM_PROVIDER=groq.")
+            return OpenAICompatibleProvider(
+                base_url=GROQ_BASE_URL,
+                model=GROQ_MODEL,
+                api_key=GROQ_API_KEY,
+            )
+        if LLM_PROVIDER == "lmstudio":
+            return OpenAICompatibleProvider(base_url=LMSTUDIO_BASE_URL, model=LMSTUDIO_MODEL)
+        if LLM_PROVIDER == "tinyllm":
             return TinyLLMProvider()
-        except Exception as exc:
-            logger.warning("Falling back to MockLLMProvider: %s", exc)
-            return MockLLMProvider()
+        raise RuntimeError(f"Unsupported ANGADGPT_LLM_PROVIDER: {LLM_PROVIDER}")
 
     def _summarize_if_needed(self) -> Optional[str]:
         def summarizer(prompt: str, target_messages: int) -> str:
