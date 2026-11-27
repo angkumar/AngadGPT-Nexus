@@ -3,9 +3,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
-
 BASE_DIR = Path(__file__).resolve().parents[2]
+load_dotenv(BASE_DIR / ".env")
+
 WORKSPACE_ROOT = Path(
     os.getenv("ANGADGPT_WORKSPACE_ROOT", str(BASE_DIR))
 ).resolve()
