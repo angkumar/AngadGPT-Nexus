@@ -1,9 +1,10 @@
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from backend.agent.agent import Agent
+from backend.agent.llm import LLMProviderError
 from backend.core.auth import require_auth
 from backend.api.ws import WebSocketManager
 from backend.scheduler.runner import TaskRunner
@@ -38,7 +39,10 @@ async def health() -> Dict[str, Any]:
 
 @router.post("/agent/step", dependencies=[Depends(require_auth)])
 async def agent_step(payload: AgentRequest) -> Dict[str, Any]:
-    return get_agent().step(payload.message)
+    try:
+        return get_agent().step(payload.message)
+    except LLMProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/memory", dependencies=[Depends(require_auth)])

@@ -1,9 +1,16 @@
 from dataclasses import dataclass
+import logging
 from typing import Any, Dict, List
 
 import httpx
 
 from backend.core.config import LMSTUDIO_BASE_URL, LMSTUDIO_MODEL, TINYLLM_MODEL_PATH
+
+logger = logging.getLogger("agent.llm")
+
+
+class LLMProviderError(Exception):
+    """Raised when a configured model provider rejects a request."""
 
 
 @dataclass
@@ -90,7 +97,21 @@ class OpenAICompatibleProvider(LLMProvider):
                 json=payload,
                 headers=headers,
             )
-            response.raise_for_status()
+            if response.is_error:
+                try:
+                    error_data = response.json().get("error", {})
+                    error_message = error_data.get("message", "")
+                except (ValueError, AttributeError):
+                    error_message = ""
+                logger.error(
+                    "LLM provider returned HTTP %s: %s",
+                    response.status_code,
+                    error_message[:500] or response.reason_phrase,
+                )
+                raise LLMProviderError(
+                    f"AI provider rejected the request (HTTP {response.status_code}). "
+                    "Check the Railway service logs for details."
+                )
             data = response.json()
         content = data["choices"][0]["message"]["content"]
         return LLMResponse(content=content, raw=data)
