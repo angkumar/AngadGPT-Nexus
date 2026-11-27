@@ -37,11 +37,13 @@ struct NexusAPIClient {
 
     private func normalizeAssistantContent(from data: Data) -> String {
         if let response = try? JSONDecoder().decode(AgentStepResponse.self, from: data) {
+            if response.type == "tool",
+               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+               let result = object["result"] {
+                return describeToolResult(result)
+            }
             if let content = response.content {
                 return normalize(rawContent: content)
-            }
-            if response.action == "respond", let content = response.content {
-                return content
             }
         }
 
@@ -52,6 +54,40 @@ struct NexusAPIClient {
         }
 
         return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    private func describeToolResult(_ result: Any) -> String {
+        guard let dict = result as? [String: Any] else { return String(describing: result) }
+        if let error = dict["error"] as? String { return "Error: \(error)" }
+        if let items = dict["items"] as? [String] {
+            return items.isEmpty ? "Nothing here." : items.map { "• \($0)" }.joined(separator: "\n")
+        }
+        if let matches = dict["matches"] as? [String] {
+            return matches.isEmpty ? "No matches." : matches.joined(separator: "\n")
+        }
+        if let repos = dict["repos"] as? [[String: Any]] {
+            let names = repos.compactMap { $0["name"] as? String }.map { "• \($0)" }
+            return names.isEmpty ? "No repositories." : names.joined(separator: "\n")
+        }
+        if let diff = dict["diff"] as? String { return diff.isEmpty ? "No changes." : diff }
+        if let content = dict["content"] as? String {
+            if let path = dict["path"] as? String { return "\(path)\n\n\(content)" }
+            return content
+        }
+        if let code = dict["returncode"] as? Int {
+            let output = (dict["stdout"] as? String ?? "") + (dict["stderr"] as? String ?? "")
+            return "Exit code \(code)\n\n\(output)"
+        }
+        if let path = dict["path"] as? String {
+            if dict["written"] as? Bool == true { return "Wrote \(path)." }
+            if dict["created"] as? Bool == true { return "Created \(path)." }
+            if dict["appended"] as? Bool == true { return "Appended to \(path)." }
+        }
+        if let pretty = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys]),
+           let text = String(data: pretty, encoding: .utf8) {
+            return text
+        }
+        return String(describing: dict)
     }
 
     private func normalize(rawContent: String) -> String {

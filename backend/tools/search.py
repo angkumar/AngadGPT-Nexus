@@ -19,9 +19,12 @@ class SearchTool(Tool):
         "required": ["pattern"],
     }
 
+    def __init__(self, workspace_root: Path = WORKSPACE_ROOT) -> None:
+        self.workspace_root = workspace_root.resolve()
+
     def _resolve(self, path: str) -> Path:
-        candidate = (WORKSPACE_ROOT / path).resolve()
-        if WORKSPACE_ROOT not in candidate.parents and candidate != WORKSPACE_ROOT:
+        candidate = (self.workspace_root / path).resolve()
+        if self.workspace_root not in candidate.parents and candidate != self.workspace_root:
             raise ValueError("Path is outside allowed workspace")
         return candidate
 

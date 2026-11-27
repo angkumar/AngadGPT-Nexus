@@ -15,10 +15,13 @@ class RepoScanTool(Tool):
         },
     }
 
+    def __init__(self, workspace_root: Path = WORKSPACE_ROOT) -> None:
+        self.workspace_root = workspace_root.resolve()
+
     def run(self, **kwargs) -> Dict[str, Any]:
         include_non_git = bool(kwargs.get("include_non_git", False))
         items: List[Dict[str, Any]] = []
-        for entry in WORKSPACE_ROOT.iterdir():
+        for entry in self.workspace_root.iterdir():
             if not entry.is_dir():
                 continue
             is_git = (entry / ".git").exists()

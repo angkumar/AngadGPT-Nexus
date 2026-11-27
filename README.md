@@ -10,7 +10,7 @@ A local, high-performance agentic web app powered by a local ai (swappable), wit
 - File tool for workspace file listing/reading (safe path sandbox)
 - Cron-style scheduling (overnight training)
 - Real-time log streaming via WebSocket
-- Optional auth token
+- Clerk authentication with account-isolated memory and workspaces
 
 ## Project Layout
 - `backend/` FastAPI app, agent core, tools, scheduler
@@ -27,7 +27,22 @@ source .venv/bin/activate
 pip install -r backend/requirements.txt
 ```
 
-2. Create a `.env` file (see `.env.example`).
+2. Copy `.env.example` to `.env` and set `CLERK_ISSUER_URL` to the issuer shown
+   for the selected Clerk development instance. Keep `ANGADGPT_AUTH_MODE=clerk`.
+   The backend validates session JWTs against the instance JWKS; no Clerk secret
+   key is needed by the API.
+
+```env
+CLERK_ISSUER_URL=https://your-instance.clerk.accounts.dev
+CLERK_AUDIENCE=
+ANGADGPT_USER_DATA_DIR=memory/users
+```
+
+The Clerk CLI links this repo to the selected application. From `frontend/`, run
+`clerk env pull --instance <development-instance-id> --file .env.local` to write
+the development keys for Vite. `.env.local` is gitignored. Configure sign-in
+methods in Clerk and allow your frontend origin. If you configure a JWT audience,
+set the same value in `CLERK_AUDIENCE`.
 3. Run the API:
 
 ```bash
@@ -54,7 +69,6 @@ the repository root. The Vite frontend remains on Vercel.
    - `ANGADGPT_LLM_PROVIDER=groq`
    - `GROQ_API_KEY` = your Groq API key
    - `GROQ_MODEL=openai/gpt-oss-20b`
-   - `ANGADGPT_AUTH_TOKEN` = a long random token
    - `ANGADGPT_ALLOWED_ORIGINS` = your exact Vercel origin, such as
      `https://your-app.vercel.app` (no path or trailing slash)
 
@@ -63,19 +77,20 @@ the repository root. The Vite frontend remains on Vercel.
    volume; its services sleep when idle and share a $1 monthly usage allowance.
    The API may take a little time to wake after inactivity, and scheduled jobs
    are not reliable while a free service is asleep.
-5. Generate a token locally with `openssl rand -hex 32`. Enter the same token in
-   the frontend's Auth token field. Do not put it in a `VITE_` variable or commit
-   it; Vite variables are included in browser code.
+5. The selected Clerk app currently has a development instance only. Before
+   production, choose a domain you own and create the production instance in
+   Clerk. Set its production issuer URL on Railway and its production publishable
+   key in Vercel. Never expose a Clerk secret key in the frontend.
 6. In Vercel, set `VITE_API_URL` to the Railway public origin
    (`https://your-service.up.railway.app`, without `/api`), then redeploy.
 7. Verify `https://your-service.up.railway.app/api/health` returns
    `{"status":"ok"}`. The frontend now calls `/api/...` correctly for both
    local Vite proxy use and the Railway API.
 
-The current API is a single-user prototype: one shared auth token does not
-provide separate accounts or per-user data isolation. Keep the Vercel site
-private while using this setup. The backend's file and script tools see Railway's
-container, not files on your computer.
+Each Clerk account gets a separate SQLite memory, calendar, and blank workspace
+under `ANGADGPT_USER_DATA_DIR`. File and script tools only see that account's
+workspace. The backend cannot see files on a user's computer; files need to be
+placed in the account workspace on the backend host to be available to its tools.
 
 ## Frontend Setup
 1. Install dependencies:
@@ -148,7 +163,22 @@ Examples:
 {"action":"tool","tool_name":"workspace","args":{"action":"mkdir","path":"NewRepo"}}\n{"action":"tool","tool_name":"workspace","args":{"action":"write","path":"NewRepo/README.md","content":"# NewRepo\\n"}}\n```
 
 ## Auth
-Set `ANGADGPT_AUTH_TOKEN` in `.env` to require a Bearer token for API access.
+The frontend requires `VITE_CLERK_PUBLISHABLE_KEY`; it renders Clerk sign-in,
+provides a user menu with sign-out, and sends the active session token with every
+API request. The backend defaults to fail-closed Clerk authentication and checks
+the token issuer and signature. A shared-token mode exists only when explicitly
+set with `ANGADGPT_AUTH_MODE=local` and a non-empty `ANGADGPT_AUTH_TOKEN`.
+
+### Setup checklist
+
+1. In Clerk, copy the **Publishable key** and **Issuer URL** into the local
+   environment files above.
+2. Allow your frontend origin in Clerk and enable the sign-in methods you want.
+3. For deployment, set `CLERK_ISSUER_URL` and `ANGADGPT_USER_DATA_DIR` on the
+   backend host, and `VITE_CLERK_PUBLISHABLE_KEY` plus `VITE_API_URL` on the
+   frontend host. Keep the backend data directory on persistent storage.
+4. Restart/redeploy both services, create a test account, and confirm another
+   account starts with an empty conversation and workspace.
 
 ## Notes
 - Logs stream to the UI via WebSocket at `/api/ws`.

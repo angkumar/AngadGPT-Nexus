@@ -19,9 +19,12 @@ class WorkspaceTool(Tool):
         "required": ["action", "path"],
     }
 
+    def __init__(self, workspace_root: Path = WORKSPACE_ROOT) -> None:
+        self.workspace_root = workspace_root.resolve()
+
     def _resolve(self, path: str) -> Path:
-        candidate = (WORKSPACE_ROOT / path).resolve()
-        if WORKSPACE_ROOT not in candidate.parents and candidate != WORKSPACE_ROOT:
+        candidate = (self.workspace_root / path).resolve()
+        if self.workspace_root not in candidate.parents and candidate != self.workspace_root:
             raise ValueError("Path is outside allowed workspace")
         return candidate
 
@@ -36,24 +39,24 @@ class WorkspaceTool(Tool):
 
         if action == "read":
             content = target.read_text(encoding="utf-8")
-            return {"path": str(target.relative_to(WORKSPACE_ROOT)), "content": content}
+            return {"path": str(target.relative_to(self.workspace_root)), "content": content}
 
         if action == "write":
             content = kwargs.get("content", "")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
-            return {"path": str(target.relative_to(WORKSPACE_ROOT)), "written": True}
+            return {"path": str(target.relative_to(self.workspace_root)), "written": True}
 
         if action == "append":
             content = kwargs.get("content", "")
             target.parent.mkdir(parents=True, exist_ok=True)
             with target.open("a", encoding="utf-8") as handle:
                 handle.write(content)
-            return {"path": str(target.relative_to(WORKSPACE_ROOT)), "appended": True}
+            return {"path": str(target.relative_to(self.workspace_root)), "appended": True}
 
         if action == "mkdir":
             target.mkdir(parents=True, exist_ok=True)
-            return {"path": str(target.relative_to(WORKSPACE_ROOT)), "created": True}
+            return {"path": str(target.relative_to(self.workspace_root)), "created": True}
 
         if action == "diff":
             content = kwargs.get("content", "")
@@ -71,7 +74,7 @@ class WorkspaceTool(Tool):
                     lineterm="",
                 )
             )
-            return {"path": str(target.relative_to(WORKSPACE_ROOT)), "diff": diff}
+            return {"path": str(target.relative_to(self.workspace_root)), "diff": diff}
 
         return {"error": "Unsupported action"}
 

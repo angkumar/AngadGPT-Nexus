@@ -17,6 +17,15 @@ class CalendarEvent:
     location: str
 
 
+def as_event_dict(event: Any) -> Optional[Dict[str, Any]]:
+    """Normalize provider results so local and Google providers agree."""
+    if event is None:
+        return None
+    if isinstance(event, dict):
+        return event
+    return event.__dict__
+
+
 class LocalCalendarProvider:
     def __init__(self, db_path: str = MEMORY_DB_PATH) -> None:
         self.db_path = db_path
@@ -136,10 +145,10 @@ class CalendarTool(Tool):
                 description=kwargs.get("description", ""),
                 location=kwargs.get("location", ""),
             )
-            return {"event": event.__dict__}
+            return {"event": as_event_dict(event)}
         if action == "list":
             events = self.provider.list_events(start_after=kwargs.get("start_after"))
-            return {"events": [e.__dict__ for e in events]}
+            return {"events": [as_event_dict(e) for e in events]}
         if action == "update":
             event = self.provider.update_event(
                 kwargs.get("event_id"),
@@ -149,7 +158,7 @@ class CalendarTool(Tool):
                 description=kwargs.get("description"),
                 location=kwargs.get("location"),
             )
-            return {"event": event.__dict__ if event else None}
+            return {"event": as_event_dict(event)}
         if action == "delete":
             success = self.provider.delete_event(kwargs.get("event_id"))
             return {"deleted": success}

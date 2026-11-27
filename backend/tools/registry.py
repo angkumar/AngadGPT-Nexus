@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Dict
 
 from .base import Tool
@@ -10,19 +11,20 @@ from .scripts import ScriptTool
 from .workspace import WorkspaceTool
 
 
-def default_tools() -> Dict[str, Tool]:
+def default_tools(workspace_root: Path | None = None, calendar_db_path: str | None = None) -> Dict[str, Tool]:
     if CALENDAR_PROVIDER == "google":
         from .calendar_google import GoogleCalendarProvider
 
         calendar_provider = GoogleCalendarProvider()
     else:
-        calendar_provider = LocalCalendarProvider()
+        calendar_provider = LocalCalendarProvider(calendar_db_path) if calendar_db_path else LocalCalendarProvider()
+    kwargs = {"workspace_root": workspace_root} if workspace_root else {}
     calendar = CalendarTool(provider=calendar_provider)
-    files = FileTool()
-    repos = RepoScanTool()
-    search = SearchTool()
-    scripts = ScriptTool()
-    workspace = WorkspaceTool()
+    files = FileTool(**kwargs)
+    repos = RepoScanTool(**kwargs)
+    search = SearchTool(**kwargs)
+    scripts = ScriptTool(**kwargs)
+    workspace = WorkspaceTool(**kwargs)
     return {
         calendar.name: calendar,
         files.name: files,

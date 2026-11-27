@@ -4,7 +4,12 @@ from typing import Any, Dict, List
 
 import httpx
 
-from backend.core.config import LMSTUDIO_BASE_URL, LMSTUDIO_MODEL, TINYLLM_MODEL_PATH
+from backend.core.config import (
+    LLM_TIMEOUT_SECONDS,
+    LMSTUDIO_BASE_URL,
+    LMSTUDIO_MODEL,
+    TINYLLM_MODEL_PATH,
+)
 
 logger = logging.getLogger("agent.llm")
 
@@ -64,7 +69,7 @@ class MockLLMProvider(LLMProvider):
         last = messages[-1]["content"] if messages else ""
         content = (
             "{\"action\": \"respond\", \"content\": "
-            "\"TinyLLM offline. Echo: "
+            "\"The model provider is offline. Echo: "
             + last.replace("\"", "'")
             + "\"}"
         )
@@ -91,7 +96,7 @@ class OpenAICompatibleProvider(LLMProvider):
             "temperature": 0.2,
         }
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
-        with httpx.Client(timeout=120) as client:
+        with httpx.Client(timeout=LLM_TIMEOUT_SECONDS) as client:
             response = client.post(
                 f"{self.base_url}/v1/chat/completions",
                 json=payload,
@@ -103,15 +108,18 @@ class OpenAICompatibleProvider(LLMProvider):
                     error_message = error_data.get("message", "")
                 except (ValueError, AttributeError):
                     error_message = ""
+                detail = error_message[:300] or response.reason_phrase or "no detail"
                 logger.error(
-                    "LLM provider returned HTTP %s: %s",
-                    response.status_code,
-                    error_message[:500] or response.reason_phrase,
+                    "LLM provider returned HTTP %s: %s", response.status_code, detail
                 )
                 raise LLMProviderError(
-                    f"AI provider rejected the request (HTTP {response.status_code}). "
-                    "Check the Railway service logs for details."
+                    f"{self.name} rejected the request (HTTP {response.status_code}): {detail}"
                 )
-            data = response.json()
-        content = data["choices"][0]["message"]["content"]
+            try:
+                data = response.json()
+                content = data["choices"][0]["message"]["content"]
+            except (ValueError, KeyError, IndexError, TypeError) as exc:
+                raise LLMProviderError(
+                    f"{self.name} returned a response without message content."
+                ) from exc
         return LLMResponse(content=content, raw=data)

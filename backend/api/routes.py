@@ -1,35 +1,62 @@
+import re
+import threading
+from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.agent.agent import Agent
 from backend.agent.llm import LLMProviderError
-from backend.core.auth import require_auth
+from backend.core.auth import authenticate_token, require_auth
+from backend.core.config import USER_DATA_DIR
 from backend.api.ws import WebSocketManager
-from backend.scheduler.runner import TaskRunner
+from backend.scheduler.runner import TaskRunner, validate_cron
 from backend.tools.calendar import CalendarTool
 
 router = APIRouter()
 
 ws_manager = WebSocketManager()
-agent: Agent | None = None
 task_runner = TaskRunner(ws_manager)
 
-
-def get_agent() -> Agent:
-    global agent
-    if agent is None:
-        agent = Agent()
-    return agent
+# Each account gets its own memory, calendar and workspace under USER_DATA_DIR.
+_agents: Dict[str, Agent] = {}
+_agents_lock = threading.Lock()
 
 
-def get_calendar_tool() -> CalendarTool:
-    return get_agent().tools.get("calendar", CalendarTool())
+def _user_dir(user_id: str) -> Path:
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "_", user_id) or "unknown"
+    return USER_DATA_DIR / safe_id
+
+
+def get_agent(user_id: str) -> Agent:
+    with _agents_lock:
+        cached = _agents.get(user_id)
+        if cached is not None:
+            return cached
+
+        user_dir = _user_dir(user_id)
+        workspace = user_dir / "workspace"
+        workspace.mkdir(parents=True, exist_ok=True)
+        memory_db = str(user_dir / "memory.sqlite3")
+        agent = Agent(
+            memory_db_path=memory_db,
+            workspace_root=workspace,
+            calendar_db_path=memory_db,
+        )
+        _agents[user_id] = agent
+        return agent
+
+
+def get_calendar_tool(user_id: str) -> CalendarTool:
+    tool = get_agent(user_id).tools.get("calendar")
+    if tool is None:
+        raise HTTPException(status_code=500, detail="Calendar tool is unavailable.")
+    return tool
 
 
 class AgentRequest(BaseModel):
-    message: str
+    message: str = Field(min_length=1, max_length=20000)
 
 
 @router.get("/health")
@@ -37,73 +64,126 @@ async def health() -> Dict[str, Any]:
     return {"status": "ok"}
 
 
-@router.post("/agent/step", dependencies=[Depends(require_auth)])
-async def agent_step(payload: AgentRequest) -> Dict[str, Any]:
+# Sync handlers run in FastAPI's threadpool, so the blocking model call no
+# longer freezes the event loop for the whole app.
+@router.post("/agent/step")
+def agent_step(payload: AgentRequest, user_id: str = Depends(require_auth)) -> Dict[str, Any]:
     try:
-        return get_agent().step(payload.message)
+        return get_agent(user_id).step(payload.message)
     except LLMProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.get("/memory", dependencies=[Depends(require_auth)])
-async def memory() -> Dict[str, Any]:
-    agent = get_agent()
+@router.get("/memory")
+def memory(user_id: str = Depends(require_auth)) -> Dict[str, Any]:
+    current = get_agent(user_id)
     return {
-        "summary": agent.memory.get_summary(),
-        "messages": [m.__dict__ for m in agent.memory.list_messages(100)],
+        "summary": current.memory.get_summary(),
+        "messages": [m.__dict__ for m in current.memory.list_messages(100)],
     }
 
 
-@router.post("/calendar", dependencies=[Depends(require_auth)])
-async def calendar(payload: Dict[str, Any]) -> Dict[str, Any]:
-    return get_calendar_tool().run(**payload)
+@router.post("/memory/reset")
+def reset_memory(user_id: str = Depends(require_auth)) -> Dict[str, bool]:
+    get_agent(user_id).reset_conversation()
+    return {"reset": True}
 
 
-@router.get("/tasks", dependencies=[Depends(require_auth)])
-async def tasks() -> Dict[str, Any]:
+@router.post("/calendar")
+def calendar(
+    payload: Dict[str, Any], user_id: str = Depends(require_auth)
+) -> Dict[str, Any]:
+    if not payload.get("action"):
+        raise HTTPException(status_code=400, detail="`action` is required.")
+    try:
+        return get_calendar_tool(user_id).run(**payload)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Calendar error: {exc}") from exc
+
+
+@router.get("/tasks")
+def tasks(user_id: str = Depends(require_auth)) -> Dict[str, Any]:
     return {
-        "tasks": {task_id: task.__dict__ for task_id, task in task_runner.list_tasks().items()}
+        "tasks": {
+            task_id: {
+                "id": task.id,
+                "name": task.name,
+                "schedule": task.schedule,
+                "last_run": task.last_run,
+                "last_status": task.last_status,
+                "last_output": task.last_output,
+            }
+            for task_id, task in task_runner.list_tasks(user_id).items()
+        }
     }
 
-@router.get("/tools", dependencies=[Depends(require_auth)])
-async def tools() -> Dict[str, Any]:
-    agent = get_agent()
+
+@router.get("/tools")
+def tools(user_id: str = Depends(require_auth)) -> Dict[str, Any]:
+    current = get_agent(user_id)
     return {
         "tools": {
             name: {
                 "description": tool.description,
                 "input_schema": tool.input_schema,
             }
-            for name, tool in agent.tools.items()
+            for name, tool in current.tools.items()
         }
     }
 
 
-@router.post("/tasks/schedule", dependencies=[Depends(require_auth)])
-async def schedule_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+@router.post("/tasks/schedule")
+def schedule_task(
+    payload: Dict[str, Any], user_id: str = Depends(require_auth)
+) -> Dict[str, Any]:
     task_id = payload.get("task_id", "overnight_train")
     cron = payload.get("cron", "0 2 * * *")
-    task_runner.schedule_training(task_id, cron)
+    try:
+        validate_cron(cron)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid cron expression: {exc}"
+        ) from exc
+    task_runner.schedule_training(task_id, cron, user_id)
     return {"scheduled": True, "task_id": task_id, "cron": cron}
 
-@router.post("/tasks/run", dependencies=[Depends(require_auth)])
-async def run_task(payload: Dict[str, Any]) -> Dict[str, Any]:
+
+@router.post("/tasks/run")
+async def run_task(
+    payload: Dict[str, Any], user_id: str = Depends(require_auth)
+) -> Dict[str, Any]:
     task_id = payload.get("task_id", "overnight_train")
-    task_runner.run_now(task_id)
+    if not task_runner.start_now(task_id, user_id):
+        raise HTTPException(status_code=404, detail=f"Unknown task: {task_id}")
     return {"started": True, "task_id": task_id}
 
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
-    await ws_manager.connect(websocket)
+    try:
+        user_id = authenticate_token(websocket.query_params.get("token"))
+    except HTTPException:
+        await websocket.close(code=4401)
+        return
+    await ws_manager.connect(websocket, user_id)
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        ws_manager.disconnect(websocket)
+        pass
+    finally:
+        ws_manager.disconnect(websocket, user_id)
 
 
 def start_scheduler() -> None:
     task_runner.start()
-    if "overnight_train" not in task_runner.list_tasks():
-        task_runner.schedule_training("overnight_train", "0 2 * * *")
+    if "overnight_train" not in task_runner.list_tasks("system"):
+        task_runner.schedule_training("overnight_train", "0 2 * * *", "system")
+
+
+def stop_scheduler() -> None:
+    task_runner.shutdown()

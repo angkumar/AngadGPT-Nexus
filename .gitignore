@@ -4,8 +4,12 @@ frontend/dist
 memory/*.sqlite3
 memory/*.jsonl
 .env
+.env.local
 memory/credentials.json
 NexusChatiOS/DerivedData/
 NexusChatiOS/build/
 *.xcuserstate
 xcuserdata/
+__pycache__/
+*.py[cod]
+memory/users/

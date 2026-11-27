@@ -10,6 +10,7 @@ WORKSPACE_ROOT = Path(
     os.getenv("ANGADGPT_WORKSPACE_ROOT", str(BASE_DIR))
 ).resolve()
 MEMORY_DIR = BASE_DIR / "memory"
+USER_DATA_DIR = Path(os.getenv("ANGADGPT_USER_DATA_DIR", str(MEMORY_DIR / "users"))).resolve()
 SCRIPTS_DIR = BASE_DIR / "scripts"
 
 MEMORY_DB_PATH = os.getenv("ANGADGPT_MEMORY_DB", str(MEMORY_DIR / "memory.sqlite3"))
@@ -30,6 +31,7 @@ LLM_PROVIDER = os.getenv("ANGADGPT_LLM_PROVIDER", "lmstudio").strip().lower()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 GROQ_BASE_URL = "https://api.groq.com/openai"
+LLM_TIMEOUT_SECONDS = float(os.getenv("ANGADGPT_LLM_TIMEOUT_SECONDS", "120"))
 
 ALLOWED_ORIGINS = [
     origin.strip()
@@ -38,6 +40,11 @@ ALLOWED_ORIGINS = [
 ]
 
 AUTH_TOKEN = os.getenv("ANGADGPT_AUTH_TOKEN", "")
+AUTH_MODE = os.getenv("ANGADGPT_AUTH_MODE", "clerk").strip().lower()
+
+CLERK_ISSUER_URL = os.getenv("CLERK_ISSUER_URL", "").rstrip("/")
+CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL", "").rstrip("/")
+CLERK_AUDIENCE = os.getenv("CLERK_AUDIENCE", "")
 
 SCHEDULER_TIMEZONE = os.getenv("ANGADGPT_TIMEZONE", "America/Detroit")
 

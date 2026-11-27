@@ -18,9 +18,12 @@ class FileTool(Tool):
         "required": ["action"],
     }
 
+    def __init__(self, workspace_root: Path = WORKSPACE_ROOT) -> None:
+        self.workspace_root = workspace_root.resolve()
+
     def _resolve(self, path: str) -> Path:
-        candidate = (WORKSPACE_ROOT / path).resolve()
-        if WORKSPACE_ROOT not in candidate.parents and candidate != WORKSPACE_ROOT:
+        candidate = (self.workspace_root / path).resolve()
+        if self.workspace_root not in candidate.parents and candidate != self.workspace_root:
             raise ValueError("Path is outside allowed workspace")
         return candidate
 
@@ -28,11 +31,11 @@ class FileTool(Tool):
         action = kwargs.get("action")
         if action == "list":
             target = self._resolve(kwargs.get("path", "."))
-            items = [str(p.relative_to(WORKSPACE_ROOT)) for p in target.iterdir()]
+            items = [str(p.relative_to(self.workspace_root)) for p in target.iterdir()]
             return {"items": items}
         if action == "read":
             target = self._resolve(kwargs.get("path", ""))
             limit = int(kwargs.get("limit", 5000))
             content = target.read_text(encoding="utf-8")[:limit]
-            return {"path": str(target.relative_to(WORKSPACE_ROOT)), "content": content}
+            return {"path": str(target.relative_to(self.workspace_root)), "content": content}
         return {"error": "Unsupported action"}

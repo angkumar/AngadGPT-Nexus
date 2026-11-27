@@ -77,6 +77,8 @@ struct AgentStepRequest: Encodable {
 }
 
 struct AgentStepResponse: Decodable {
+    let type: String?
+    let tool: String?
     let content: String?
     let action: String?
 }
