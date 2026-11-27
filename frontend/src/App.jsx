@@ -79,7 +79,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand-row"><div className="brand-mark">N</div><span>Nexus</span><span className="sidebar-chevron">⌄</span></div>
+        <div className="brand-row"><img className="brand-mark" src="/nexus-logo.png" alt="Nexus logo" /><span>Nexus</span><span className="sidebar-chevron">⌄</span></div>
         <button className="new-chat" onClick={() => window.location.reload()}><span>＋</span> New chat</button>
         <div className="sidebar-section">Recent</div>
         {messages.length > 0 && <div className="history-item active"><span className="history-dot" />{chatTitle}</div>}
@@ -95,13 +95,13 @@ export default function App() {
         <header className="topbar">
           <div className="mobile-brand">Nexus</div>
           <div className="chat-heading"><span>{chatTitle}</span><span className="heading-chevron">⌄</span></div>
-          <div className="model-pill"><span className="model-spark">✳</span><span>Nexus AI</span><span className="model-caret">⌄</span></div>
+          <div className="model-pill"><img className="model-logo" src="/nexus-logo.png" alt="" /><span>Nexus AI</span><span className="model-caret">⌄</span></div>
         </header>
 
         <main className="conversation" ref={scrollRef}>
           {messages.length === 0 ? (
             <div className="welcome">
-              <div className="welcome-symbol">✳</div>
+              <img className="welcome-symbol" src="/nexus-logo.png" alt="Nexus logo" />
               <h1>What can I help you with?</h1>
               <p>Ask a question, explore an idea, or work on a project.</p>
             </div>
@@ -109,10 +109,10 @@ export default function App() {
             <div className="message-list">
               {messages.map((msg, idx) => (
                 <article key={idx} className={`message ${msg.role}`}>
-                  {msg.role === 'assistant' ? <><div className="assistant-avatar">✳</div><ReactMarkdown className="markdown" remarkPlugins={[remarkGfm, remarkBreaks]}>{msg.content}</ReactMarkdown></> : <div className="user-bubble">{msg.content}</div>}
+                  {msg.role === 'assistant' ? <><img className="assistant-avatar" src="/nexus-logo.png" alt="Nexus" /><ReactMarkdown className="markdown" remarkPlugins={[remarkGfm, remarkBreaks]}>{msg.content}</ReactMarkdown></> : <div className="user-bubble">{msg.content}</div>}
                 </article>
               ))}
-              {isSending && <article className="message assistant"><div className="assistant-avatar">✳</div><div className="thinking"><span /><span /><span /></div></article>}
+              {isSending && <article className="message assistant"><img className="assistant-avatar" src="/nexus-logo.png" alt="Nexus" /><div className="thinking"><span /><span /><span /></div></article>}
             </div>
           )}
         </main>
