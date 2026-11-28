@@ -8,6 +8,7 @@ import rehypeKatex from 'rehype-katex'
 const apiBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
 const DEFAULT_MESSAGES_KEY = 'angadgpt_messages'
 const MAX_SAVED_MESSAGES = 200
+const MAX_THREADS = 200
 const HEALTH_INTERVAL_MS = 30000
 const MAX_ATTACHMENTS = 3
 const MAX_IMAGE_EDGE = 1200
@@ -65,6 +66,49 @@ const loadSavedMessages = (key) => {
   } catch {
     return []
   }
+}
+
+const newThreadId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
+
+const emptyThread = () => ({ id: newThreadId(), messages: [], updatedAt: Date.now() })
+
+const threadTitle = (thread) => {
+  const first = (thread?.messages || []).find((message) => message.role === 'user')?.content
+  return first ? String(first).replace(/\s+/g, ' ').slice(0, 42) : 'New chat'
+}
+
+// Every conversation is its own entry, so starting a new chat never replaces an
+// older transcript. Single transcripts saved by earlier versions become one.
+const loadThreads = (key, legacyKey) => {
+  let threads = []
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || '[]')
+    if (Array.isArray(parsed)) {
+      threads = parsed
+        .filter((thread) => thread && typeof thread.id === 'string' && Array.isArray(thread.messages))
+        .slice(0, MAX_THREADS)
+        .map((thread) => ({
+          id: thread.id,
+          messages: thread.messages.slice(-MAX_SAVED_MESSAGES),
+          updatedAt: Number(thread.updatedAt) || Date.now(),
+        }))
+    }
+  } catch {
+    threads = []
+  }
+  if (threads.length === 0) {
+    const legacy = loadSavedMessages(legacyKey)
+    if (legacy.length > 0) {
+      threads = [{ id: newThreadId(), messages: legacy, updatedAt: Date.now() }]
+    }
+  }
+  return threads
+}
+
+const makeThreadStore = (key, legacyKey) => {
+  const threads = loadThreads(key, legacyKey)
+  const withBlank = threads.length > 0 ? threads : [emptyThread()]
+  return { key, threads: withBlank, activeId: withBlank[0].id }
 }
 
 const unwrapContent = (raw) => {
@@ -184,18 +228,24 @@ function errorDetail(body) {
 
 export default function App({ getToken, storageKey = DEFAULT_MESSAGES_KEY, accountControl = null }) {
   const messagesKey = storageKey || DEFAULT_MESSAGES_KEY
+  const threadsKey = `${messagesKey}:threads`
   const [status, setStatus] = useState('booting')
   const [agentInput, setAgentInput] = useState('')
-  const [messages, setMessages] = useState(() => loadSavedMessages(messagesKey))
+  const [threadStore, setThreadStore] = useState(() => makeThreadStore(threadsKey, messagesKey))
   const [agentError, setAgentError] = useState('')
   const [isSending, setIsSending] = useState(false)
   const [attachments, setAttachments] = useState([])
   const scrollRef = useRef(null)
   const textareaRef = useRef(null)
   const fileInputRef = useRef(null)
+  const threads = threadStore.key === threadsKey ? threadStore.threads : []
+  const activeId = threadStore.key === threadsKey ? threadStore.activeId : ''
+  const activeThread = threads.find((thread) => thread.id === activeId) || null
+  const messages = activeThread ? activeThread.messages : []
+  const visibleThreads = threads.filter((thread) => thread.messages.length > 0)
+  const activeIdRef = useRef(activeId)
   const messagesRef = useRef(messages)
-  const firstUserMessage = messages.find((message) => message.role === 'user')?.content
-  const chatTitle = firstUserMessage ? String(firstUserMessage).replace(/\s+/g, ' ').slice(0, 42) : 'New chat'
+  const chatTitle = activeThread ? threadTitle(activeThread) : 'New chat'
 
   useEffect(() => {
     let cancelled = false
@@ -232,6 +282,28 @@ export default function App({ getToken, storageKey = DEFAULT_MESSAGES_KEY, accou
   }, [messages])
 
   useEffect(() => {
+    activeIdRef.current = activeId
+  }, [activeId])
+
+  // Every write goes through the store, so each conversation keeps its own
+  // transcript and only the active one changes.
+  const updateMessages = (next) => {
+    const id = activeIdRef.current
+    if (!id) return
+    setThreadStore((prev) => {
+      if (prev.key !== threadsKey) return prev
+      return {
+        ...prev,
+        threads: prev.threads.map((thread) => {
+          if (thread.id !== id) return thread
+          const nextMessages = typeof next === 'function' ? next(thread.messages) : next
+          return { ...thread, messages: nextMessages.slice(-MAX_SAVED_MESSAGES), updatedAt: Date.now() }
+        }),
+      }
+    })
+  }
+
+  useEffect(() => {
     let cancelled = false
     const loadServerMemory = async () => {
       try {
@@ -241,6 +313,9 @@ export default function App({ getToken, storageKey = DEFAULT_MESSAGES_KEY, accou
         if (!response.ok) throw new Error(errorDetail(await response.text()))
         const data = await response.json()
         if (cancelled || messagesRef.current.length > 0) return
+        // Saved conversations win: restoring the server transcript into a blank
+        // thread would duplicate one that is already in Recent.
+        if (threadStore.threads.some((thread) => thread.messages.length > 0)) return
         const restored = (data.messages || []).flatMap((message) => {
           if (message.role === 'user' || message.role === 'assistant') {
             return [{ role: message.role, content: message.content }]
@@ -259,7 +334,7 @@ export default function App({ getToken, storageKey = DEFAULT_MESSAGES_KEY, accou
           }
           return []
         }).slice(-MAX_SAVED_MESSAGES)
-        setMessages(restored)
+        updateMessages(restored)
       } catch (error) {
         if (!cancelled) setAgentError(error?.message || 'Could not load your saved conversation.')
       }
@@ -269,31 +344,66 @@ export default function App({ getToken, storageKey = DEFAULT_MESSAGES_KEY, accou
   }, [getToken, messagesKey])
 
   useEffect(() => {
+    if (threadStore.key !== threadsKey) return
+    // Attached images are large base64 strings: keep them out of localStorage.
+    const persistable = (threads, maxThreads, maxMessages) =>
+      threads.slice(0, maxThreads).map((thread) => ({
+        ...thread,
+        messages: thread.messages
+          .slice(-maxMessages)
+          .map(({ role, content, tool }) => ({ role, content, tool })),
+      }))
     try {
-      // Attached images are large base64 strings: keep them out of localStorage.
-      const persistable = messages
-        .slice(-MAX_SAVED_MESSAGES)
-        .map(({ role, content, tool }) => ({ role, content, tool }))
-      localStorage.setItem(messagesKey, JSON.stringify(persistable))
+      localStorage.setItem(
+        threadsKey,
+        JSON.stringify(persistable(threadStore.threads, threadStore.threads.length, MAX_SAVED_MESSAGES)),
+      )
     } catch {
-      // Storage can be full or disabled; the chat still works in memory.
+      try {
+        // Too big for the storage quota: keep fewer conversations rather than
+        // letting one oversized write stop every future save.
+        localStorage.setItem(threadsKey, JSON.stringify(persistable(threadStore.threads, 10, 20)))
+      } catch {
+        // Storage can be full or disabled; the chat still works in memory.
+      }
     }
-  }, [messages, messagesKey])
+  }, [threadStore, threadsKey])
 
   const startNewChat = async () => {
     if (isSending) return
+    // A new chat is a new entry; the previous transcript stays under Recent.
+    const fresh = emptyThread()
+    // Never drop an older transcript here; only the storage fallback trims.
+    setThreadStore((prev) => ({ ...prev, threads: [fresh, ...prev.threads], activeId: fresh.id }))
+    setAgentError('')
+    setAgentInput('')
+    setAttachments([])
     try {
       const response = await fetch(`${apiBase}/api/memory/reset`, {
         method: 'POST',
         headers: await buildHeaders(getToken),
       })
       if (!response.ok) throw new Error(errorDetail(await response.text()))
-      setMessages([])
-      setAgentError('')
-      setAgentInput('')
-      localStorage.removeItem(messagesKey)
     } catch (error) {
-      setAgentError(`Could not start a fresh conversation: ${error?.message || error}`)
+      setAgentError(`Started a new chat, but Nexus could not reset its memory: ${error?.message || error}`)
+    }
+  }
+
+  const openThread = async (id) => {
+    if (isSending || id === activeId) return
+    setThreadStore((prev) => ({ ...prev, activeId: id }))
+    setAgentError('')
+    setAgentInput('')
+    setAttachments([])
+    try {
+      // The backend keeps one running conversation, so the opened chat starts
+      // clean instead of answering with the other chat's context.
+      await fetch(`${apiBase}/api/memory/reset`, {
+        method: 'POST',
+        headers: await buildHeaders(getToken),
+      })
+    } catch {
+      // The transcript still opens; only the model's running context is shared.
     }
   }
 
@@ -342,7 +452,7 @@ export default function App({ getToken, storageKey = DEFAULT_MESSAGES_KEY, accou
     setAttachments([])
     setAgentError('')
     setIsSending(true)
-    setMessages((prev) => [...prev, { role: 'user', content: message, images }])
+    updateMessages((prev) => [...prev, { role: 'user', content: message, images }])
     try {
       const res = await fetch(`${apiBase}/api/agent/step`, {
         method: 'POST',
@@ -355,7 +465,7 @@ export default function App({ getToken, storageKey = DEFAULT_MESSAGES_KEY, accou
       }
       const data = await res.json()
       const reply = formatReply(data)
-      setMessages((prev) => [...prev, { role: 'assistant', content: reply.content, tool: reply.tool }])
+      updateMessages((prev) => [...prev, { role: 'assistant', content: reply.content, tool: reply.tool }])
     } catch (err) {
       setAgentError(`Network error: ${err?.message || err}`)
     } finally {
@@ -376,8 +486,22 @@ export default function App({ getToken, storageKey = DEFAULT_MESSAGES_KEY, accou
         <div className="brand-row"><img className="brand-mark" src="/nexus-logo.png" alt="Nexus logo" /><span>Nexus</span><span className="sidebar-chevron">⌄</span></div>
         <button className="new-chat" onClick={startNewChat} disabled={isSending}><span>＋</span> New chat</button>
         <div className="sidebar-section">Recent</div>
-        {messages.length > 0 && <div className="history-item active"><span className="history-dot" />{chatTitle}</div>}
-        {messages.length === 0 && <div className="sidebar-note">Your conversations will appear here.</div>}
+        <div className="history-list">
+          {visibleThreads.map((thread) => (
+            <button
+              key={thread.id}
+              type="button"
+              className={thread.id === activeId ? 'history-item active' : 'history-item'}
+              onClick={() => openThread(thread.id)}
+              disabled={isSending}
+              title={threadTitle(thread)}
+            >
+              <span className="history-dot" />
+              <span className="history-title">{threadTitle(thread)}</span>
+            </button>
+          ))}
+        </div>
+        {visibleThreads.length === 0 && <div className="sidebar-note">Your conversations will appear here.</div>}
         <div className="sidebar-bottom">
           <div className="connection"><i className={status} />{status === 'booting' ? 'Connecting…' : status === 'online' ? 'Connected' : 'Offline'}</div>
         </div>
