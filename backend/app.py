@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -6,7 +7,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.api.routes import router, start_scheduler, stop_scheduler
-from backend.core.config import ALLOWED_ORIGINS, BASE_DIR
+from backend.core.config import (
+    ALLOWED_ORIGINS,
+    AUTH_MODE,
+    BASE_DIR,
+    CLERK_AUDIENCE,
+    CLERK_ISSUER_URL,
+)
 from backend.core.logging import setup_logging
 
 STATIC_DIR = BASE_DIR / "frontend" / "dist"
@@ -14,6 +21,12 @@ STATIC_DIR = BASE_DIR / "frontend" / "dist"
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    logging.getLogger(__name__).info(
+        "Auth mode=%s clerk_issuer=%s clerk_audience=%s",
+        AUTH_MODE,
+        CLERK_ISSUER_URL or "(unset)",
+        CLERK_AUDIENCE or "(none)",
+    )
     start_scheduler()
     try:
         yield

@@ -19,6 +19,10 @@ button { color: inherit; }
 .sidebar-section { padding: 0 10px 9px; color: #858585; font-size: 11px; font-weight: 600; letter-spacing: .04em; }
 .history-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 10px; border-radius: 7px; color: #ddd; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .history-item.active { background: #262626; }
+.history-list { display: flex; flex-direction: column; gap: 2px; max-height: 46vh; overflow-y: auto; scrollbar-width: thin; }
+button.history-item { border: 0; background: transparent; text-align: left; font: inherit; cursor: pointer; }
+button.history-item:disabled { cursor: default; }
+.history-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: #aaa; }
 .sidebar-note { padding: 10px; color: #6f6f6f; font-size: 11px; line-height: 1.5; }
 .sidebar-bottom { margin-top: auto; padding: 12px 6px 2px; border-top: 1px solid #2b2b2b; }

@@ -1,3 +1,4 @@
+import logging
 import secrets
 from functools import lru_cache
 
@@ -6,6 +7,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import PyJWKClient, PyJWTError, decode
 
 from .config import AUTH_MODE, AUTH_TOKEN, CLERK_AUDIENCE, CLERK_ISSUER_URL, CLERK_JWKS_URL
+
+logger = logging.getLogger(__name__)
 
 security = HTTPBearer(auto_error=False)
 
@@ -43,6 +46,14 @@ def verify_clerk_token(token: str) -> str:
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except PyJWTError as exc:
+        # Clients get a generic message; the reason goes to the server log so a
+        # misconfigured issuer, audience or clock is diagnosable from deploy logs.
+        logger.warning(
+            "Clerk session rejected (issuer=%s, audience=%s): %s",
+            CLERK_ISSUER_URL or "(unset)",
+            CLERK_AUDIENCE or "(none)",
+            exc,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired Clerk session.",
