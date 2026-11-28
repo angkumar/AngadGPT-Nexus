@@ -9,6 +9,9 @@ const apiBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
 const DEFAULT_MESSAGES_KEY = 'angadgpt_messages'
 const MAX_SAVED_MESSAGES = 200
 const HEALTH_INTERVAL_MS = 30000
+const MAX_ATTACHMENTS = 3
+const MAX_IMAGE_EDGE = 1200
+const VISION_MODEL_LABEL = 'qwen/qwen3.8-27b'
 
 const TOOL_LABELS = {
   files: 'Files',
@@ -17,6 +20,30 @@ const TOOL_LABELS = {
   repos: 'Repositories',
   scripts: 'Scripts',
   calendar: 'Calendar',
+}
+
+// Groq caps an image request at 20MB and counts base64 as ~33% overhead, so
+// large photos are downscaled in the browser before they are sent.
+async function prepareImage(file) {
+  const source = await new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(new Error('Could not read that image.'))
+    reader.readAsDataURL(file)
+  })
+  const element = await new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('That file is not a readable image.'))
+    image.src = source
+  })
+  const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(element.width, element.height))
+  if (scale >= 1 && source.length < 1200000) return source
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(element.width * scale))
+  canvas.height = Math.max(1, Math.round(element.height * scale))
+  canvas.getContext('2d').drawImage(element, 0, 0, canvas.width, canvas.height)
+  return canvas.toDataURL('image/jpeg', 0.85)
 }
 
 async function buildHeaders(getToken) {
@@ -162,8 +189,10 @@ export default function App({ getToken, storageKey = DEFAULT_MESSAGES_KEY, accou
   const [messages, setMessages] = useState(() => loadSavedMessages(messagesKey))
   const [agentError, setAgentError] = useState('')
   const [isSending, setIsSending] = useState(false)
+  const [attachments, setAttachments] = useState([])
   const scrollRef = useRef(null)
   const textareaRef = useRef(null)
+  const fileInputRef = useRef(null)
   const messagesRef = useRef(messages)
   const firstUserMessage = messages.find((message) => message.role === 'user')?.content
   const chatTitle = firstUserMessage ? String(firstUserMessage).replace(/\s+/g, ' ').slice(0, 42) : 'New chat'
@@ -241,7 +270,11 @@ export default function App({ getToken, storageKey = DEFAULT_MESSAGES_KEY, accou
 
   useEffect(() => {
     try {
-      localStorage.setItem(messagesKey, JSON.stringify(messages.slice(-MAX_SAVED_MESSAGES)))
+      // Attached images are large base64 strings: keep them out of localStorage.
+      const persistable = messages
+        .slice(-MAX_SAVED_MESSAGES)
+        .map(({ role, content, tool }) => ({ role, content, tool }))
+      localStorage.setItem(messagesKey, JSON.stringify(persistable))
     } catch {
       // Storage can be full or disabled; the chat still works in memory.
     }
@@ -264,18 +297,57 @@ export default function App({ getToken, storageKey = DEFAULT_MESSAGES_KEY, accou
     }
   }
 
+  const addImages = async (fileList) => {
+    const files = Array.from(fileList || []).filter((file) => file.type.startsWith('image/'))
+    if (files.length === 0) {
+      setAgentError('Only image files can be attached.')
+      return
+    }
+    const room = MAX_ATTACHMENTS - attachments.length
+    if (room <= 0) {
+      setAgentError(`You can attach up to ${MAX_ATTACHMENTS} images per message.`)
+      return
+    }
+    setAgentError(files.length > room ? `Only ${MAX_ATTACHMENTS} images per message.` : '')
+    try {
+      const prepared = await Promise.all(
+        files.slice(0, room).map(async (file) => ({
+          id: `${file.name}-${file.size}-${Math.random().toString(36).slice(2, 8)}`,
+          name: file.name,
+          dataUrl: await prepareImage(file),
+        })),
+      )
+      setAttachments((prev) => [...prev, ...prepared].slice(0, MAX_ATTACHMENTS))
+    } catch (error) {
+      setAgentError(error?.message || 'Could not attach that image.')
+    }
+  }
+
+  const removeAttachment = (id) => {
+    setAttachments((prev) => prev.filter((item) => item.id !== id))
+  }
+
+  const handleFilesPicked = (event) => {
+    addImages(event.target.files)
+    event.target.value = ''
+  }
+
   const sendAgent = async () => {
     const input = agentInput.trim()
-    if (!input || isSending) return
+    const outgoing = attachments
+    if ((!input && outgoing.length === 0) || isSending) return
+    const message = input || 'Describe this image.'
+    const images = outgoing.map((item) => item.dataUrl)
     setAgentInput('')
+    setAttachments([])
     setAgentError('')
     setIsSending(true)
-    setMessages((prev) => [...prev, { role: 'user', content: input }])
+    setMessages((prev) => [...prev, { role: 'user', content: message, images }])
     try {
       const res = await fetch(`${apiBase}/api/agent/step`, {
         method: 'POST',
         headers: await buildHeaders(getToken),
-        body: JSON.stringify({ message: input }),
+        body: JSON.stringify({ message, images }),
       })
       if (!res.ok) {
         setAgentError(`Request failed (${res.status}): ${errorDetail(await res.text())}`)
@@ -348,7 +420,18 @@ export default function App({ getToken, storageKey = DEFAULT_MESSAGES_KEY, accou
                         </div>
                       </div>
                     </>
-                  ) : <div className="user-bubble">{msg.content}</div>}
+                  ) : (
+                    <div className="user-bubble">
+                      {msg.images?.length ? (
+                        <div className="user-images">
+                          {msg.images.map((src, imageIndex) => (
+                            <img key={imageIndex} className="user-image" src={src} alt={`Attachment ${imageIndex + 1}`} />
+                          ))}
+                        </div>
+                      ) : null}
+                      {msg.content}
+                    </div>
+                  )}
                 </article>
               ))}
               {isSending && <article className="message assistant"><img className="assistant-avatar" src="/nexus-logo.png" alt="Nexus" /><div className="thinking"><span /><span /><span /></div></article>}
@@ -365,6 +448,17 @@ export default function App({ getToken, storageKey = DEFAULT_MESSAGES_KEY, accou
               </div>
             )}
             <div className="composer">
+              {attachments.length > 0 && (
+                <div className="attachment-row">
+                  {attachments.map((item) => (
+                    <div key={item.id} className="attachment">
+                      <img src={item.dataUrl} alt={item.name} />
+                      <button type="button" className="attachment-remove" onClick={() => removeAttachment(item.id)} aria-label={`Remove ${item.name}`}>×</button>
+                    </div>
+                  ))}
+                  <span className="attachment-model">Vision model · {VISION_MODEL_LABEL}</span>
+                </div>
+              )}
               <textarea
                 ref={textareaRef}
                 value={agentInput}
@@ -374,7 +468,18 @@ export default function App({ getToken, storageKey = DEFAULT_MESSAGES_KEY, accou
                 placeholder="Message Nexus…"
                 aria-label="Message Nexus"
               />
-              <div className="composer-tools"><span className="composer-hint">↵ to send · ⇧↵ for a new line</span><button className="send-button" onClick={sendAgent} disabled={isSending || !agentInput.trim()} aria-label="Send message">↑</button></div>
+              <div className="composer-tools">
+                <div className="composer-actions">
+                  <button type="button" className="attach-button" onClick={() => fileInputRef.current?.click()} disabled={isSending} aria-label="Attach an image" title="Attach an image">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M20.5 11.5 11.9 20a5.4 5.4 0 0 1-7.6-7.6l8.7-8.7a3.6 3.6 0 0 1 5.1 5.1l-8.7 8.7a1.8 1.8 0 0 1-2.5-2.5l8-8" />
+                    </svg>
+                  </button>
+                  <span className="composer-hint">↵ to send · ⇧↵ for a new line</span>
+                </div>
+                <button className="send-button" onClick={sendAgent} disabled={isSending || (!agentInput.trim() && attachments.length === 0)} aria-label="Send message">↑</button>
+              </div>
+              <input ref={fileInputRef} className="visually-hidden" type="file" accept="image/*" multiple onChange={handleFilesPicked} tabIndex={-1} />
             </div>
             <div className="composer-disclaimer">Nexus can make mistakes. Check important information.</div>
           </div>

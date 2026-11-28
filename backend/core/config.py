@@ -30,6 +30,8 @@ LMSTUDIO_MODEL = os.getenv("LMSTUDIO_MODEL", "")
 LLM_PROVIDER = os.getenv("ANGADGPT_LLM_PROVIDER", "lmstudio").strip().lower()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
+# gpt-oss is text-only; turns that carry an image need Groq's multimodal model.
+GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
 GROQ_BASE_URL = "https://api.groq.com/openai"
 LLM_TIMEOUT_SECONDS = float(os.getenv("ANGADGPT_LLM_TIMEOUT_SECONDS", "120"))
 

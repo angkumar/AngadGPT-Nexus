@@ -3,7 +3,7 @@ import logging
 import re
 import shlex
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from backend.agent.llm import (
     LLMProvider,
@@ -16,6 +16,7 @@ from backend.core.config import (
     GROQ_API_KEY,
     GROQ_BASE_URL,
     GROQ_MODEL,
+    GROQ_VISION_MODEL,
     LLM_PROVIDER,
     LMSTUDIO_BASE_URL,
     LMSTUDIO_MODEL,
@@ -55,6 +56,7 @@ Math and formulas:
 - For a single numeric answer, end with \boxed{...}. Keep display blocks short and one idea per block.
 
 When calling tools, respond with strict JSON: {"action":"tool","tool_name":"<name>","args":{...}}.
+If the API declares native function-calling tools, call them directly instead of writing that JSON.
 For normal replies, respond with plain text (no JSON wrapper).
 """.strip()
 
@@ -115,6 +117,8 @@ class Agent:
                 base_url=GROQ_BASE_URL,
                 model=GROQ_MODEL,
                 api_key=GROQ_API_KEY,
+                supports_native_tools=True,
+                vision_model=GROQ_VISION_MODEL,
             )
         if LLM_PROVIDER == "lmstudio":
             return OpenAICompatibleProvider(base_url=LMSTUDIO_BASE_URL, model=LMSTUDIO_MODEL)
@@ -147,7 +151,9 @@ class Agent:
             logger.warning("Skipping summarization due to error: %s", exc)
             return None
 
-    def step(self, user_input: str) -> Dict[str, Any]:
+    def step(
+        self, user_input: str, images: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         summary = self._summarize_if_needed()
         self.memory.add_message("user", user_input)
 
@@ -162,7 +168,7 @@ class Agent:
                 self.memory.add_message("assistant", str(routed.get("content", "")))
             return routed
 
-        messages: List[Dict[str, str]] = []
+        messages: List[Dict[str, Any]] = []
         if summary:
             messages.append({"role": "system", "content": f"Summary so far: {summary}"})
         # Historical tool results are stored as `tool` rows, but they are not
@@ -179,8 +185,23 @@ class Agent:
             ]
         )
 
+        # Memory only holds text, so the turn being answered is rewritten with
+        # the attached images as OpenAI-style content parts. The provider then
+        # picks its vision model for this request.
+        if images:
+            messages[-1] = {
+                "role": "user",
+                "content": [{"type": "text", "text": user_input}]
+                + [
+                    {"type": "image_url", "image_url": {"url": url}}
+                    for url in images
+                ],
+            }
+
         try:
-            response = self.provider.generate(SYSTEM_PROMPT, messages)
+            response = self.provider.generate(
+                SYSTEM_PROMPT, messages, self._tool_specs()
+            )
         except LLMProviderError:
             raise
         except Exception as exc:
@@ -192,6 +213,20 @@ class Agent:
                 exc,
             )
             response = MockLLMProvider().generate(SYSTEM_PROMPT, messages)
+
+        native_call = self._native_tool_call(response)
+        if native_call is not None:
+            tool_name, tool_args = native_call
+            tool_result = self._run_tool(tool_name, tool_args)
+            self.memory.add_message(
+                "tool",
+                json.dumps({"tool": tool_name, "result": tool_result.get("result")}),
+            )
+            return {
+                "type": "tool",
+                "tool": tool_name,
+                "result": tool_result.get("result"),
+            }
 
         result = self._parse_response(response.content)
 
@@ -215,6 +250,44 @@ class Agent:
     def reset_conversation(self) -> None:
         self.pending_edit = None
         self.memory.reset()
+
+    def _tool_specs(self) -> List[Dict[str, Any]]:
+        """OpenAI/Groq function-calling schemas for every registered tool."""
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.input_schema
+                    or {"type": "object", "properties": {}},
+                },
+            }
+            for tool in self.tools.values()
+        ]
+
+    @staticmethod
+    def _native_tool_call(response: Any) -> Optional[Tuple[str, Dict[str, Any]]]:
+        """Return (tool_name, args) for the first native function call, if any."""
+        tool_calls = getattr(response, "tool_calls", None) or []
+        if not tool_calls:
+            return None
+        function = tool_calls[0].get("function") or {}
+        name = function.get("name")
+        if not name:
+            return None
+        raw_args = function.get("arguments")
+        args: Dict[str, Any] = {}
+        if isinstance(raw_args, dict):
+            args = raw_args
+        elif isinstance(raw_args, str) and raw_args.strip():
+            try:
+                parsed = json.loads(raw_args)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                args = parsed
+        return str(name), args
 
     def _parse_response(self, content: str) -> Dict[str, Any]:
         try:

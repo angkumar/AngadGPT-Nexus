@@ -1,6 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -22,12 +22,18 @@ class LLMProviderError(Exception):
 class LLMResponse:
     content: str
     raw: Dict[str, Any]
+    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class LLMProvider:
     name = "base"
 
-    def generate(self, system: str, messages: List[Dict[str, str]]) -> LLMResponse:
+    def generate(
+        self,
+        system: str,
+        messages: List[Dict[str, str]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> LLMResponse:
         raise NotImplementedError
 
 
@@ -51,7 +57,12 @@ class TinyLLMProvider(LLMProvider):
             raise RuntimeError("TINYLLM_MODEL_PATH is not set.")
         self._client = tinyllm.Client(model_path=self.model_path)
 
-    def generate(self, system: str, messages: List[Dict[str, str]]) -> LLMResponse:
+    def generate(
+        self,
+        system: str,
+        messages: List[Dict[str, str]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> LLMResponse:
         self._load()
         payload = {
             "system": system,
@@ -65,7 +76,12 @@ class TinyLLMProvider(LLMProvider):
 class MockLLMProvider(LLMProvider):
     name = "mock"
 
-    def generate(self, system: str, messages: List[Dict[str, str]]) -> LLMResponse:
+    def generate(
+        self,
+        system: str,
+        messages: List[Dict[str, str]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> LLMResponse:
         last = messages[-1]["content"] if messages else ""
         content = (
             "{\"action\": \"respond\", \"content\": "
@@ -84,17 +100,49 @@ class OpenAICompatibleProvider(LLMProvider):
         base_url: str = LMSTUDIO_BASE_URL,
         model: str = LMSTUDIO_MODEL,
         api_key: str = "",
+        supports_native_tools: bool = False,
+        vision_model: Optional[str] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model or "local-model"
+        # Used instead of `model` for turns that carry images, so a text-only
+        # model such as gpt-oss is never asked to read a picture.
+        self.vision_model = vision_model or None
         self.api_key = api_key
+        # Hosted models such as Groq's gpt-oss are trained to emit native tool
+        # calls. If the request declares no tools, Groq rejects the whole turn
+        # with `tool_use_failed: Tool choice is none, but model called a tool`,
+        # so forward the tool schemas instead of relying on JSON in the text.
+        self.supports_native_tools = supports_native_tools
 
-    def generate(self, system: str, messages: List[Dict[str, str]]) -> LLMResponse:
-        payload = {
-            "model": self.model,
+    @staticmethod
+    def _has_image(messages: List[Dict[str, Any]]) -> bool:
+        for message in messages:
+            content = message.get("content")
+            if isinstance(content, list) and any(
+                isinstance(part, dict) and part.get("type") == "image_url"
+                for part in content
+            ):
+                return True
+        return False
+
+    def generate(
+        self,
+        system: str,
+        messages: List[Dict[str, str]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> LLMResponse:
+        model = self.model
+        if self.vision_model and self._has_image(messages):
+            model = self.vision_model
+        payload: Dict[str, Any] = {
+            "model": model,
             "messages": [{"role": "system", "content": system}] + messages,
             "temperature": 0.2,
         }
+        if tools and self.supports_native_tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         with httpx.Client(timeout=LLM_TIMEOUT_SECONDS) as client:
             response = client.post(
@@ -117,9 +165,15 @@ class OpenAICompatibleProvider(LLMProvider):
                 )
             try:
                 data = response.json()
-                content = data["choices"][0]["message"]["content"]
+                message = data["choices"][0]["message"]
             except (ValueError, KeyError, IndexError, TypeError) as exc:
                 raise LLMProviderError(
                     f"{self.name} returned a response without message content."
                 ) from exc
-        return LLMResponse(content=content, raw=data)
+            content = message.get("content") or ""
+            tool_calls = message.get("tool_calls") or []
+            if not content and not tool_calls:
+                raise LLMProviderError(
+                    f"{self.name} returned a response without message content."
+                )
+        return LLMResponse(content=content, raw=data, tool_calls=tool_calls)

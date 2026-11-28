@@ -1,7 +1,7 @@
 import re
 import threading
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
@@ -57,6 +57,30 @@ def get_calendar_tool(user_id: str) -> CalendarTool:
 
 class AgentRequest(BaseModel):
     message: str = Field(min_length=1, max_length=20000)
+    images: List[str] = Field(default_factory=list)
+
+
+# Groq accepts at most three images per request, each capped at 20MB.
+MAX_IMAGES = 3
+MAX_IMAGE_CHARS = 20 * 1024 * 1024
+IMAGE_DATA_URL = re.compile(r"^data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+")
+
+
+def _validate_images(images: List[str]) -> None:
+    if len(images) > MAX_IMAGES:
+        raise HTTPException(
+            status_code=400, detail=f"Attach at most {MAX_IMAGES} images per message."
+        )
+    for image in images:
+        if not IMAGE_DATA_URL.match(image or ""):
+            raise HTTPException(
+                status_code=400,
+                detail="Images must be base64 data URLs such as data:image/png;base64,...",
+            )
+        if len(image) > MAX_IMAGE_CHARS:
+            raise HTTPException(
+                status_code=400, detail="Each image must be smaller than 20MB."
+            )
 
 
 @router.get("/health")
@@ -68,8 +92,9 @@ async def health() -> Dict[str, Any]:
 # longer freezes the event loop for the whole app.
 @router.post("/agent/step")
 def agent_step(payload: AgentRequest, user_id: str = Depends(require_auth)) -> Dict[str, Any]:
+    _validate_images(payload.images)
     try:
-        return get_agent(user_id).step(payload.message)
+        return get_agent(user_id).step(payload.message, images=payload.images)
     except LLMProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except ValueError as exc:
